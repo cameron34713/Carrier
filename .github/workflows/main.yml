@@ -1,0 +1,61 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  SYMBOL_PACKAGE: false
+jobs:
+  build-and-deploy:
+    name: Build and deploy
+    env:
+      build-configuration: Release
+    runs-on: ubuntu-latest
+    container: ghcr.io/sliekens/gw2sdk/devcontainer:latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+      with:
+        submodules: true
+    - name: Configure GPR
+      run: dotnet nuget add source https://nuget.pkg.github.com/sliekens/index.json --name sliekens
+    - name: Configure GPR authentication
+      uses: actions/setup-dotnet@v3
+      with:
+        source-url: https://nuget.pkg.github.com/sliekens/index.json
+        dotnet-version: null
+        global-json-file: null
+      env:
+        NUGET_AUTH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+    - name: Install dependencies
+      run: dotnet restore --locked-mode
+    - name: Test
+      run: dotnet test --no-restore --settings coverletArgs.runsettings
+      env:
+        ApiKeyBasic: ${{ secrets.API_TOKEN_BASIC }}
+        ApiKey: ${{ secrets.API_TOKEN_FULL }}
+    - name: Upload coverage
+      uses: actions/upload-artifact@v2
+      with:
+        name: coverage
+        path: "**/coverage.cobertura.xml"
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v1.5.0
+    - name: Build
+      run: dotnet build --configuration ${{ env.build-configuration }} --no-restore
+    - name: Pack artifacts
+      run: dotnet pack --configuration ${{ env.build-configuration }} --no-build --output artifacts --version-suffix CI-$(date --utc '+%Y%m%d-%H%M%S')
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v2
+      with:
+        name: packages
+        path: artifacts
+    - name: Upload packages to GitHub Packages
+      run: dotnet nuget push artifacts/*.nupkg --api-key ${{secrets.GITHUB_TOKEN}}
+      if:  ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
